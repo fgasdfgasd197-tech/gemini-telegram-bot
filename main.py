@@ -1,6 +1,5 @@
 import json
 from countryinfo import CountryInfo
-
 # 50 ta davlat va ularning milliy salomlashuv iboralari
 countries_data = [
     {"name": "Uzbekistan", "greeting": "Assalomu alaykum", "meaning": "Sizga tinchlik bo'lsin"},
