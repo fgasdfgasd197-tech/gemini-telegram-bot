@@ -1,32 +1,91 @@
 import os
 import asyncio
+import sqlite3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup 
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# Telegram token server muhitidan olinadi
+# Server muhitidan olinadigan parametrlar
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # O'zingizning Telegram ID'ingizni kiriting
+
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Suhbat bosqichlarini belgilash (FSM)
+# ==================== DATABASE (SQLite) ====================
+def init_db():
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            age TEXT,
+            hobby TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_user(user_id, name, age, hobby):
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO users (user_id, name, age, hobby)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, name, age, hobby))
+    conn.commit()
+    conn.close()
+
+def get_user(user_id):
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, age, hobby FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
+
+def get_all_users():
+    conn = sqlite3.connect("bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return [u[0] for u in users]
+
+# ==================== STATES (FSM) ====================
 class UserDialog(StatesGroup):
     waiting_for_name = State()
     waiting_for_age = State()
     waiting_for_hobby = State()
 
-# Qayta boshlash tugmasi
-restart_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="🔄 Qayta boshlash")]],
+class AdminStates(StatesGroup):
+    waiting_for_broadcast = State()
+
+# ==================== KEYBOARDS ====================
+main_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="👤 Profilim"), KeyboardButton(text="🔄 Qayta ro'yxatdan o'tish")]
+    ],
     resize_keyboard=True
 )
 
-# 1-bosqich: /start yoki "Qayta boshlash" tugmasi bosilganda
+admin_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📢 Xabar yuborish")],
+        [KeyboardButton(text="🏠 Bosh menyu")]
+    ],
+    resize_keyboard=True
+)
+
+# ==================== HANDLERS ====================
+
+# 1-bosqich: /start
 @dp.message(CommandStart())
-@dp.message(F.text == "🔄 Qayta boshlash")
+@dp.message(F.text == "🔄 Qayta ro'yxatdan o'tish")
 async def start_handler(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
@@ -37,19 +96,16 @@ async def start_handler(message: types.Message, state: FSMContext):
     )
     await state.set_state(UserDialog.waiting_for_name)
 
-# Jarayonni bekor qilish komandasi
+# Bekor qilish
 @dp.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        return
     await state.clear()
     await message.answer(
-        "Suhbat bekor qilindi. Qaytadan boshlash uchun /start bosing.", 
-        reply_markup=ReplyKeyboardRemove()
+        "Amal bekor qilindi.", 
+        reply_markup=main_keyboard
     )
 
-# 2-bosqich: Ismni qabul qilish va yoshni so'rash
+# 2-bosqich: Ism
 @dp.message(UserDialog.waiting_for_name)
 async def process_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
@@ -61,7 +117,7 @@ async def process_name(message: types.Message, state: FSMContext):
     await message.answer(f"Tanishganimdan xursandman, **{name}**! 😃\nYoshingiz nechida?", parse_mode="Markdown")
     await state.set_state(UserDialog.waiting_for_age)
 
-# 3-bosqich: Yoshni qabul qilish va xobbi so'rash (Validation bilan)
+# 3-bosqich: Yosh
 @dp.message(UserDialog.waiting_for_age)
 async def process_age(message: types.Message, state: FSMContext):
     if not message.text.isdigit() or not (5 <= int(message.text) <= 100):
@@ -72,24 +128,88 @@ async def process_age(message: types.Message, state: FSMContext):
     await message.answer("Ajoyib! Qiziqishlaringiz yoki xobbingiz nima?")
     await state.set_state(UserDialog.waiting_for_hobby)
 
-# 4-bosqich: Xobbini qabul qilish va natijani chiqarish
+# 4-bosqich: Xobbi va Bazaga saqlash
 @dp.message(UserDialog.waiting_for_hobby)
 async def process_hobby(message: types.Message, state: FSMContext):
     await state.update_data(user_hobby=message.text)
     user_data = await state.get_data()
     
+    name = user_data.get("user_name")
+    age = user_data.get("user_age")
+    hobby = user_data.get("user_hobby")
+    
+    # Bazaga yozish
+    save_user(message.from_user.id, name, age, hobby)
+    
     summary_text = (
-        "✅ **Siz kiritgan ma'lumotlar:**\n\n"
-        f"👤 **Ism:** {user_data.get('user_name')}\n"
-        f"🎂 **Yosh:** {user_data.get('user_age')} yosh\n"
-        f"🎯 **Xobbi:** {user_data.get('user_hobby')}\n\n"
-        "Ma'lumotlar uchun rahmat! Siz bilan suhbatlashish juda yoqimli bo'ldi. ✨"
+        "✅ **Siz kiritgan ma'lumotlar saqlandi:**\n\n"
+        f"👤 **Ism:** {name}\n"
+        f"🎂 **Yosh:** {age} yosh\n"
+        f"🎯 **Xobbi:** {hobby}\n\n"
+        "Rahmat! Siz bilan suhbatlashish juda yoqimli bo'ldi. ✨"
     )
     
-    await message.answer(summary_text, reply_markup=restart_keyboard, parse_mode="Markdown")
+    await message.answer(summary_text, reply_markup=main_keyboard, parse_mode="Markdown")
     await state.clear()
 
+# Profilni ko'rish
+@dp.message(F.text == "👤 Profilim")
+async def show_profile(message: types.Message):
+    user = get_user(message.from_user.id)
+    if user:
+        await message.answer(
+            f"📋 **Sizning profilingiz:**\n\n"
+            f"👤 **Ism:** {user[0]}\n"
+            f"🎂 **Yosh:** {user[1]}\n"
+            f"🎯 **Xobbi:** {user[2]}",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.answer("Siz hali ro'yxatdan o'tmabsiz. /start buyrug'ini bosing.")
+
+# Bosh menyuga qaytish
+@dp.message(F.text == "🏠 Bosh menyu")
+async def back_to_main(message: types.Message):
+    await message.answer("Bosh menyu:", reply_markup=main_keyboard)
+
+# ==================== ADMIN PANEL ====================
+@dp.message(Command("admin"))
+async def admin_cmd(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("Xush kelibsiz, Admin!", reply_markup=admin_keyboard)
+    else:
+        await message.answer("Siz admin emassiz!")
+
+@dp.message(F.text == "📊 Statistika")
+async def show_stats(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        users = get_all_users()
+        await message.answer(f"👥 Botdan foydalanuvchilar soni: **{len(users)}** ta", parse_mode="Markdown")
+
+@dp.message(F.text == "📢 Xabar yuborish")
+async def ask_broadcast_message(message: types.Message, state: FSMContext):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("Barcha foydalanuvchilarga yubormoqchi bo'lgan xabaringizni kiriting:")
+        await state.set_state(AdminStates.waiting_for_broadcast)
+
+@dp.message(AdminStates.waiting_for_broadcast)
+async def send_broadcast(message: types.Message, state: FSMContext):
+    if message.from_user.id == ADMIN_ID:
+        users = get_all_users()
+        count = 0
+        for user_id in users:
+            try:
+                await bot.send_message(user_id, message.text)
+                count += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                pass
+        await message.answer(f"✅ Xabar **{count}** ta foydalanuvchiga muvaffaqiyatli yuborildi!", reply_markup=admin_keyboard, parse_mode="Markdown")
+        await state.clear()
+
+# ==================== MAIN RUN ====================
 async def main():
+    init_db()  # Bazani yaratish
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
