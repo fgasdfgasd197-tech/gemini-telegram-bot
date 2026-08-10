@@ -215,3 +215,54 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+from countryinfo import CountryInfo
+import json
+
+country_data = []
+
+while True:
+    country_name = input("Davlat nomini kiriting: ")
+    if country_name == "stop":
+        print("Dasturni to'htatingiz !")
+        with open("information.txt", mode='a', encoding='utf-8') as file:
+            json.dump(country_data, file, indent=4, ensure_ascii=False)
+            break
+
+    try:
+        get_country = CountryInfo(country_name)
+        data = get_country.info()
+
+        name = data['name']
+        area = data['area']
+        borders = data['borders']
+        capital = data['capital']
+        currencies = data['currencies']
+        region = data['region']
+        languages = data['languages']
+        timezones = data['timezones']
+        population = data['population']
+
+        print(f"{name} davlati haqida ma'lumot: \n"
+              f"{name} davlati {region} qitasida joylashgan\n"
+              f"{name} davlati {area} huquduga teng\n"
+              f"chegaralari {borders} lar bilan chegaradosh\n"
+              f"{name} davlatingin poytaxti {capital} hisoblanadi va\n"
+              f"pul birligi esa {currencies}\n"
+              f"qabul qilingan tillari {languages}\n"
+              f"vaqt birligi esa {timezones}\n"
+              f"{name} davlat aholisi {population} ga teng.\n\n")
+
+        country_data.append({
+            'name': name,
+            'region': region,
+            'area': area,
+            'borders': borders,
+            'capital': capital,
+            'currencies': currencies,
+            'languages': languages,
+            'timezones': timezones,
+            'population': population,
+        })
+
+    except:
+        print("Siz davlat nomini notog'ri kiritiz manmcha !")
