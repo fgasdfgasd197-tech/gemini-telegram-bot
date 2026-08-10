@@ -1,56 +1,91 @@
 import os
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
-# Telegram token server muhitidan olinadi
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Suhbat bosqichlarini belgilash (FSM)
+# FSM Bosqichlari
 class UserDialog(StatesGroup):
     waiting_for_name = State()
     waiting_for_age = State()
     waiting_for_hobby = State()
 
-# 1-bosqich: /start bosilganda salomlashish va ismini so'rash
+# Qayta boshlash tugmasi
+restart_keyboard = ReplyKeyboardMarkup(
+    keyboard=[[KeyboardButton(text="🔄 Qayta boshlash")]],
+    resize_keyboard=True
+)
+
+# 1-bosqich: /start yoki Qayta boshlash
 @dp.message(CommandStart())
+@dp.message(F.text == "🔄 Qayta boshlash")
 async def start_handler(message: types.Message, state: FSMContext):
-    await message.answer("Salom! Alik olaman, hush kelibsiz! 😊\nIsmingiz nima?")
+    await state.clear()
+    await message.answer(
+        "Salom! Xush kelibsiz! 😊\n\nKeling, tanishib olamiz. **Ismingiz nima?**",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
     await state.set_state(UserDialog.waiting_for_name)
 
-# 2-bosqich: Ismni qabul qilib, yoshni so'rash
+# Bekor qilish komandasi
+@dp.message(Command("cancel"))
+async def cancel_handler(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    await state.clear()
+    await message.answer("Suhbat bekor qilindi. Qaytadan boshlash uchun /start bosing.", reply_markup=ReplyKeyboardRemove())
+
+# 2-bosqich: Ism
 @dp.message(UserDialog.waiting_for_name)
 async def process_name(message: types.Message, state: FSMContext):
-    await state.update_data(user_name=message.text)
-    await message.answer(f"Tanishganimdan xursandman, {message.text}! Yoshiz nechida?")
+    name = message.text.strip()
+    if len(name) < 2:
+        await message.answer("Iltimos, ismingizni to'g'ri kiriting (kamida 2 ta harf):")
+        return
+    
+    await state.update_data(user_name=name)
+    await message.answer(f"Tanishganimdan xursandman, **{name}**! 😃\nYoshingiz nechida?", parse_mode="Markdown")
     await state.set_state(UserDialog.waiting_for_age)
 
-# 3-bosqich: Yoshni qabul qilib, qiziqishini so'rash
+# 3-bosqich: Yosh (Tekshirish bilan)
 @dp.message(UserDialog.waiting_for_age)
 async def process_age(message: types.Message, state: FSMContext):
+    if not message.text.isdigit() or not (5 <= int(message.text) <= 100):
+        await message.answer("⚠️ Iltimos, yoshingizni faqat raqamlarda kiriting (masalan: 22):")
+        return
+
     await state.update_data(user_age=message.text)
     await message.answer("Ajoyib! Qiziqishlaringiz yoki xobbingiz nima?")
     await state.set_state(UserDialog.waiting_for_hobby)
 
-# 4-bosqich: Qiziqishni qabul qilib, suhbatni yakunlash
+# 4-bosqich: Xobbi va Yakunlash
 @dp.message(UserDialog.waiting_for_hobby)
 async def process_hobby(message: types.Message, state: FSMContext):
+    await state.update_data(user_hobby=message.text)
     user_data = await state.get_data()
-    name = user_data.get("user_name")
     
-    await message.answer(
-        f"Ma'lumotlar uchun rahmat, {name}! 🤝\n"
-        f"Siz bilan suhbatlashish juda yoqimli bo'ldi. Yaxshi dam oling!"
+    summary_text = (
+        "✅ **Siz kiritgan ma'lumotlar:**\n\n"
+        f"👤 **Ism:** {user_data.get('user_name')}\n"
+        f"🎂 **Yosh:** {user_data.get('user_age')} yosh\n"
+        f"🎯 **Xobbi:** {user_data.get('user_hobby')}\n\n"
+        "Ma'lumotlar uchun rahmat! Siz bilan suhbatlashish yoqimli bo'ldi. ✨"
     )
-    # Suhbat holatini tozalash
+    
+    await message.answer(summary_text, reply_markup=restart_keyboard, parse_mode="Markdown")
     await state.clear()
 
 async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
