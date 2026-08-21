@@ -8,7 +8,7 @@ from aiogram.types import Message
 
 # Bot tokenini shu yerga yozing
 BOT_TOKEN = "BOT_TOKENINI_SHUYERGA_YOZING"
-
+TOKEN = "8782883090:AAFJN2T7vx6SoLprymNuosKtzybR9D4I720"
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
